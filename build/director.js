@@ -36,9 +36,9 @@ var listener = {
     }
   },
 
-  fire: function () {
+  fire: function (state) {
     if (this.mode === 'modern') {
-      this.history === true ? window.onpopstate() : window.onhashchange();
+      this.history === true ? window.onpopstate({ state: state || {} }) : window.onhashchange();
     }
     else {
       this.onHashChanged();
@@ -68,10 +68,29 @@ var listener = {
         // upon initial page load. Since the handler is run manually in init(),
         // this would cause Chrome to run it twise. Currently the only
         // workaround seems to be to set the handler after the initial page load
+        // We then need to keep track of outstanding fire requests
         // http://code.google.com/p/chromium/issues/detail?id=63040
-        setTimeout(function() {
-          window.onpopstate = onchange;
-        }, 500);
+        var fireOnReady = false;
+        var fire = this.fire;
+        this.fire = function() {
+          fireOnReady = true;
+        };
+        var onDOMReady = function() {
+          setTimeout(function() {
+            self.fire = fire;
+            window.onpopstate = onchange;
+            if (fireOnReady) {
+              self.fire();
+            }
+          }, 1)
+        };
+
+        if(document.readyState === 'complete') {
+          onDOMReady();
+        }
+        else {
+          window.addEventListener('onload', onDOMReady);
+        }
       }
       else {
         window.onhashchange = onchange;
@@ -121,17 +140,20 @@ var listener = {
     }
   },
 
-  setHash: function (s) {
+  setHash: function (s, state) {
     // Mozilla always adds an entry to the history
     if (this.mode === 'legacy') {
       this.writeFrame(s);
     }
 
     if (this.history === true) {
-      window.history.pushState({}, document.title, s);
+      var current = location.pathname + location.search;
+      if (current !== s || state) {
+          window.history.pushState(state || {}, document.title, s);
+      }
       // Fire an onpopstate event manually since pushing does not obviously
       // trigger the pop event.
-      this.fire();
+      this.fire(state);
     } else {
       dloc.hash = (s[0] === '/') ? s : '/' + s;
     }
@@ -224,20 +246,22 @@ Router.prototype.explode = function () {
   return v.slice(1, v.length).split("/");
 };
 
-Router.prototype.setRoute = function (i, v, val) {
+Router.prototype.setRoute = function (i, v, val, state) {
   var url = this.explode();
 
   if (typeof i === 'number' && typeof v === 'string') {
     url[i] = v;
+	  state = val;
   }
   else if (typeof val === 'string') {
     url.splice(i, v, s);
   }
   else {
     url = [i];
+	  state = v;
   }
 
-  listener.setHash(url.join('/'));
+  listener.setHash(url.join('/'), state);
   return url;
 };
 
